@@ -1,7 +1,7 @@
-import xlrd
 import numpy as np
-
-# from sklearn.linear_model import LinearRegression
+import xlrd
+from sklearn.linear_model import LassoCV
+from sklearn.model_selection import KFold
 
 '''Introducing the data & basic set up'''
 data01 = xlrd.open_workbook(r"E:\PHBS\yr2-module2\Big Data\2019.M2.BigData\climate_change_1.xlsx")
@@ -21,17 +21,18 @@ def introducing_data(table, beg_row, end_row, beg_col, end_col=None, with_consta
 
 
 def getting_R_square(x, y, theta):
-    dif_of_y_est = x * theta - np.mean(x * theta)
-    ess = dif_of_y_est.T * dif_of_y_est
+    dif_of_y_est = x.dot(theta) - y
+    rss = np.dot(dif_of_y_est.T, dif_of_y_est)
     dif_of_y = y - np.mean(y)
-    tss = dif_of_y.T * dif_of_y
-    return ess / tss
+    tss = np.dot(dif_of_y.T, dif_of_y)
+    return 1 - rss / tss
 
 
 def getting_t_statistic(x, y, theta):
-    eps = (y - x * theta)
-    sigma_square = (eps.T * eps) / (x.shape[0] - x.shape[1])
-    xxi_di = (x.T * x).I.diagonal()
+    eps = (y - x.dot(theta))
+    sigma_square = np.dot(eps.T, eps) / (x.shape[0] - x.shape[1])
+    xx = np.dot(x.T, x)
+    xxi_di = xx.I.diagonal()
     t_statistic = []
     se = np.sqrt(sigma_square[0, 0] * xxi_di)
     for i in range(9):
@@ -65,10 +66,10 @@ y02_testing = np.mat(introducing_data(table02, 285, 309, -1, with_constant=False
 # (1)
 def closed_form_1(x, y):
     x_t = x.T
-    xx = x_t * x
+    xx = np.dot(x_t, x)
     xxi = xx.I
-    xy = x_t * y
-    return xxi * xy
+    xy = np.dot(x_t, y)
+    return np.dot(xxi, xy)
 
 
 # (2)
@@ -97,22 +98,22 @@ print_if_significant(var_labels02, theta02, 10)
 '''Question2'''
 
 
-# (1) is attached in the markdown file
+# (1) is written in the markdown file
 
 # (2)
 def closed_form_2(x, y, lam):
     x_t = x.T
-    xx = x_t * x
+    xx = np.dot(x_t, x)
     identity = np.identity(x.shape[1])
-    xy = x_t * y
-    return (xx + lam * identity).I * xy
+    xy = np.dot(x_t, y)
+    return np.dot((xx + lam * identity).I, xy)
 
 
 # (3)
 # getting the robustness of regularized model
 theta01_reg = closed_form_2(x01_training, y01_training, 1)
 R_square_testing_reg = getting_R_square(x01_testing, y01_testing, theta01_reg)
-print(R_square_testing_reg)
+print(theta01_reg)
 
 # (4)
 lam_list = [10, 1, 0.1, 0.01, 0.001]
@@ -123,6 +124,19 @@ for i in lam_list:
     R_square_training_list.append(getting_R_square(x01_training, y01_training, theta_reg))
     R_square_testing_list.append(getting_R_square(x01_testing, y01_testing, theta_reg))
 print(R_square_training_list, R_square_testing_list)
+
+KF_model = KFold(n_splits=10, shuffle=True)
+R_square_list = {}
+for i in lam_list:
+    R_square_sum = 0
+    for train_index, valid_index in KF_model.split(x01_training):
+        x_train_set, x_valid_set = x01_training[train_index], x01_training[valid_index]
+        y_train_set, y_valid_set = y01_training[train_index], y01_training[valid_index]
+        theta = closed_form_2(x_train_set, y_train_set, i)
+        R_square_sum = R_square_sum + getting_R_square(x_valid_set, y_valid_set, theta)
+    R_square = R_square_sum / 10
+    R_square_list[i]=R_square
+print(R_square_list)
 
 '''Question3'''
 # (1)
@@ -170,49 +184,43 @@ VIF(x01_training03, feature_list03)
 efficient_x01_reg_train = np.column_stack((x01_training[:, :2], x01_training[:, 4], x01_training[:, 6:]))
 efficient_x01_reg_test = np.column_stack((x01_testing[:, :2], x01_testing[:, 4], x01_testing[:, 6:]))
 
+model_lasso = LassoCV()
+model_lasso.fit(efficient_x01_reg_train, y01_training)
+print(model_lasso.coef_)
 
-def checking_validity_of_features(x_train, x_test, y_train, y_test, lam, features):
-    R_square_testing_dict = {}
-    for i in range(len(features)):
-        x_train_after_dropping = np.column_stack((x_train[:, 0:i], x_train[:, i + 1:]))
-        x_test_after_dropping = np.column_stack((x_test[:, 0:i], x_test[:, i + 1:]))
-        theta = closed_form_2(x_train_after_dropping, y_train, lam)
-        R_square_testing_dict[features[i]] = getting_R_square(x_test_after_dropping, y_test, theta)
-    print(R_square_testing_dict)
+'''Question4'''
+# transform data x
+x01_testing_array = np.array(introducing_data(table01, 1, 285, 2, 10))
 
 
-print(getting_R_square(efficient_x01_reg_test, y01_testing, closed_form_2(efficient_x01_reg_test, y01_testing, 0.001)))
-checking_validity_of_features(efficient_x01_reg_train, efficient_x01_reg_test, y01_training, y01_testing, 0.001,
-                              feature_list03)
+# function of gradient descent for ridge regression
 
-# '''Question4'''
-# # transform data x
-# transformation = np.array(introducing_data(table01, 1, 285, 2, 10)) / np.array(
-#     [3., 350., 1700., 310., 250., 400., 1500., .1, 1.])
-# x01_training_trans = np.mat(transformation)
-#
-#
-# # function of gradient descent for ridge regression
-#
-#
-# def GradientDescent(x, y, alpha, lam, tol):
-#     k = x.shape[1]
-#     n = x.shape[0]
-#     theta = np.mat(np.zeros((k, 1)))
-#     discount = 1 - alpha * lam / n
-#     count = 0
-#     while True:
-#         count = count + 1
-#         diff = x * theta - y
-#         multiply = x.T * diff
-#         subtract_part = alpha / n * multiply
-#         next_theta = theta * discount - subtract_part
-#         if count > 1000 or diff.T * diff / (2 * n) <= tol:
-#             break
-#         theta = next_theta
-#     return theta
-#
-#
-# theta_gs = GradientDescent(x01_training_trans, y01_training, 0.1, 1, 0.001)
-# print(theta_gs)
-# print(theta01_reg)
+
+def GradientDescent(x_array, y, alpha, lam, tol):
+    normalized_x = np.ones(x_array.shape[0]).reshape((x_array.shape[0], 1))
+    for i in range(x_array.shape[1] - 1):
+        xi = x_array[:, i]
+        xi_mat = xi.reshape(xi.shape[0], 1)
+        normalized_xi = (xi_mat - np.mean(xi_mat)) / np.std(xi_mat)
+        normalized_xi = np.mat(normalized_xi)
+        normalized_x = np.column_stack((normalized_x, normalized_xi))
+    k = normalized_x.shape[1]
+    n = normalized_x.shape[0]
+    theta = np.mat(np.zeros((k, 1)))
+    discount = 1 - alpha * lam / n
+    count = 0
+    while True:
+        count = count + 1
+        diff = normalized_x.dot(theta) - y
+        multiply = np.dot(normalized_x.T, diff)
+        subtract_part = alpha / n * multiply
+        next_theta = theta.dot(discount) - subtract_part
+        if count > 5000 or np.dot(diff.T, diff) / (2 * n) <= tol:
+            break
+        theta = next_theta
+    return theta
+
+
+theta_gs = GradientDescent(x01_testing_array, y01_training, 0.1, 0.01, 0.001)
+print(theta_gs)
+print(theta01_reg)
